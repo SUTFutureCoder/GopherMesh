@@ -103,4 +103,4 @@ func main() {
 
 ---
 
-© 2026 Lin Xingchen. Starry Intelligence Technology Limited. Built with hard-coded passion.
+© 2026 Starry Intelligence Technology Limited. Built with hard-coded passion.
