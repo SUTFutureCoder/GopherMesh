@@ -40,15 +40,39 @@ func TestLoadConfigCreatesDefaultWhenMissing(t *testing.T) {
 	}
 }
 
-func TestConfigNormalizeCanonicalizesRoutesBackendsAndLegacyEndpoints(t *testing.T) {
+func TestLoadConfigRejectsDeprecatedEndpointsSchema(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte(`{
+  "dashboard_port": "9999",
+  "endpoints": {
+    "8081": {
+      "name": "legacy",
+      "cmd": "internal",
+      "internal_port": "9999"
+    }
+  }
+}`), 0644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	if _, err := LoadConfig(path); err == nil {
+		t.Fatalf("LoadConfig() error = nil, want deprecated endpoints schema to be rejected")
+	}
+}
+
+func TestConfigNormalizeCanonicalizesRoutesAndBackends(t *testing.T) {
 	t.Parallel()
 
 	cfg, err := (Config{
 		TrustedOrigins: nil,
-		Endpoints: map[string]RouteConfig{
+		Routes: map[string]RouteConfig{
 			" 8088 ": {
 				Name: "Internal Route",
-				Cmd:  " Internal ",
+				Backends: []BackendConfig{
+					{Cmd: " Internal "},
+				},
 			},
 			"8089": {
 				Name:        "TCP Worker",
@@ -81,9 +105,6 @@ func TestConfigNormalizeCanonicalizesRoutesBackendsAndLegacyEndpoints(t *testing
 	}
 	if len(cfg.TrustedOrigins) != 1 || cfg.TrustedOrigins[0] != "*" {
 		t.Fatalf("TrustedOrigins = %#v, want [*]", cfg.TrustedOrigins)
-	}
-	if cfg.Endpoints != nil {
-		t.Fatalf("Endpoints should be cleared after normalization")
 	}
 
 	internal := cfg.Routes["8088"]
@@ -134,6 +155,21 @@ func TestConfigNormalizeRejectsBlankPort(t *testing.T) {
 	}).Normalize()
 	if err == nil {
 		t.Fatalf("Normalize() error = nil, want invalid blank port error")
+	}
+}
+
+func TestConfigNormalizeRejectsRouteWithoutBackends(t *testing.T) {
+	t.Parallel()
+
+	_, err := (Config{
+		Routes: map[string]RouteConfig{
+			"8081": {
+				Name: "missing-backends",
+			},
+		},
+	}).Normalize()
+	if err == nil {
+		t.Fatalf("Normalize() error = nil, want missing backends error")
 	}
 }
 

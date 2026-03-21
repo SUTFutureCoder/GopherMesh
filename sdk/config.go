@@ -1,6 +1,7 @@
 package mesh
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -14,7 +15,6 @@ type Config struct {
 	ServiceName    string                 `json:"service_name,omitempty"`
 	InternalPort   string                 `json:"internal_port,omitempty"`
 	Routes         map[string]RouteConfig `json:"routes,omitempty"`
-	Endpoints      map[string]RouteConfig `json:"endpoints,omitempty"` // Deprecated: legacy alias for routes.
 }
 
 // RouteConfig 定义单个对外暴露端口的路由规则。
@@ -23,11 +23,6 @@ type RouteConfig struct {
 	Protocol    string          `json:"protocol,omitempty"`     // 默认为 http，可配置为 tcp
 	LoadBalance string          `json:"load_balance,omitempty"` // 当前仅支持 round_robin
 	Backends    []BackendConfig `json:"backends,omitempty"`
-
-	// Deprecated: legacy single-backend fields.
-	Cmd          string   `json:"cmd,omitempty"`
-	Args         []string `json:"args,omitempty"`
-	InternalPort string   `json:"internal_port,omitempty"`
 }
 
 // BackendConfig 定义路由下单个实际承载请求的后端。
@@ -90,7 +85,9 @@ func LoadConfig(path string) (Config, error) {
 	}
 
 	var cfg Config
-	if err := json.Unmarshal(data, &cfg); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&cfg); err != nil {
 		return Config{}, fmt.Errorf("failed to parse config: %v", err)
 	}
 
@@ -116,9 +113,6 @@ func (c Config) Normalize() (Config, error) {
 	}
 
 	routes := c.Routes
-	if len(routes) == 0 && len(c.Endpoints) > 0 {
-		routes = c.Endpoints
-	}
 	if len(routes) == 0 {
 		routes = DefaultConfig().Routes
 	}
@@ -140,25 +134,14 @@ func (c Config) Normalize() (Config, error) {
 		route.Protocol = normalizeProtocol(route.Protocol)
 		route.LoadBalance = normalizeLoadBalance(route.LoadBalance)
 
-		backends := route.Backends
-		if len(backends) == 0 {
-			backends = []BackendConfig{
-				{
-					Name:         route.Name,
-					Cmd:          route.Cmd,
-					Args:         route.Args,
-					InternalPort: route.InternalPort,
-				},
-			}
-		}
-		if len(backends) == 0 {
+		if len(route.Backends) == 0 {
 			return Config{}, fmt.Errorf("route %q has no backends", publicPort)
 		}
 
-		normalizedBackends := make([]BackendConfig, 0, len(backends))
+		normalizedBackends := make([]BackendConfig, 0, len(route.Backends))
 		internalCount := 0
 
-		for index, backend := range backends {
+		for index, backend := range route.Backends {
 			backend.Name = strings.TrimSpace(backend.Name)
 			backend.Cmd = strings.TrimSpace(backend.Cmd)
 
@@ -194,15 +177,10 @@ func (c Config) Normalize() (Config, error) {
 		}
 
 		route.Backends = normalizedBackends
-		route.Cmd = ""
-		route.Args = nil
-		route.InternalPort = ""
-
 		normalized[publicPort] = route
 	}
 
 	c.Routes = normalized
-	c.Endpoints = nil
 	return c, nil
 }
 
