@@ -1,6 +1,6 @@
 # Sample Programs
 
-这个目录提供了 4 个可单独执行的示例程序：
+这个目录提供了 4 个可单独执行的示例程序，用于验证 GopherMesh 作为 `local/edge/server mesh gateway + process orchestrator` 的典型接入方式：
 
 - `l7http/hello`: 最小 HTTP JSON 服务，适合验证 L7 代理透传。
 - `l7http/sum`: 带查询参数和请求头回显的 HTTP 服务，适合验证 L7 路由与应用逻辑。

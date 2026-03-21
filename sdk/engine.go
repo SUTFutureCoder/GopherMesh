@@ -2,6 +2,7 @@ package mesh
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -9,6 +10,8 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -42,11 +45,19 @@ type ProcessInfo struct {
 	StartTime time.Time
 }
 
+type routeRuntime struct {
+	routeServers []*http.Server
+	routes       map[string]*routeState
+	tcpListeners []net.Listener
+}
+
 // Engine 是 MeshEngine 接口的具体实现
 type Engine struct {
-	cfg               Config
 	role              Role
 	dashboardListener net.Listener
+
+	cfgMu sync.RWMutex
+	cfg   Config
 
 	// 代理服务器与路由状态映射
 	routeServers []*http.Server
@@ -59,6 +70,9 @@ type Engine struct {
 
 	// 独立于进程生命周期的日志缓存字典
 	logBufs map[string]*LogBuffer
+
+	// 热重载防并发锁
+	reloadMu sync.Mutex
 }
 
 // NewEngine 负责初始化并探测节点角色
@@ -105,10 +119,21 @@ func (e *Engine) Run(ctx context.Context) error {
 		return nil
 	}
 
+	cfg := e.configSnapshot()
+
 	// 主控节点：启动独立模块的 Dashboard API
 	go func() {
-		log.Printf("[Dashboard] start API server on %s", e.dashboardListener.Addr().String())
-		if err := dashboard.Serve(e.dashboardListener, e); err != nil && err != http.ErrServerClosed {
+		host := cfg.DashboardHost
+		if host == "0.0.0.0" || host == "" {
+			host = defaultLocalHost
+		}
+		dashboardURL := fmt.Sprintf("http://%s:%s", host, cfg.DashboardPort)
+
+		log.Printf("[Dashboard] start API server on %s", dashboardURL)
+
+		go openBrowser(dashboardURL)
+
+		if err := dashboard.Serve(e.dashboardListener, e); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Printf("[Dashboard] failed to start dashboard server: %v", err)
 		}
 	}()
@@ -125,43 +150,151 @@ func (e *Engine) Run(ctx context.Context) error {
 
 // startRoutes 遍历配置中的路由并启动对应的监听器
 func (e *Engine) startRoutes() error {
-	e.routes = make(map[string]*routeState)
+	runtimeState, err := e.startRouteRuntime(e.configSnapshot())
+	if err != nil {
+		return err
+	}
+	e.installRouteRuntime(runtimeState)
+	return nil
+}
 
-	for port, cfg := range e.cfg.Routes {
-		state := newRouteState(e, port, cfg)
-		e.routes[port] = state
+func (e *Engine) startRouteRuntime(cfg Config) (*routeRuntime, error) {
+	runtimeState := &routeRuntime{
+		routes: make(map[string]*routeState),
+	}
 
-		addr := "127.0.0.1:" + port
+	for port, routeCfg := range cfg.Routes {
+		state := newRouteState(e, port, routeCfg)
+		runtimeState.routes[port] = state
+
+		addr := net.JoinHostPort(defaultLocalHost, port)
 		listener, err := net.Listen("tcp", addr)
 		if err != nil {
-			return fmt.Errorf("error listening on %s: %w", addr, err)
+			rollbackCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			_ = runtimeState.shutdown(rollbackCtx)
+			return nil, fmt.Errorf("error listening on %s: %w", addr, err)
 		}
 
-		if cfg.Protocol == "tcp" {
-			e.tcpListeners = append(e.tcpListeners, listener)
+		if routeCfg.Protocol == "tcp" {
+			runtimeState.tcpListeners = append(runtimeState.tcpListeners, listener)
 			go e.serveTCP(listener, state)
-			log.Printf("[Engine] start L4 TCP listener on %s with %d backend(s)", addr, len(cfg.Backends))
+			log.Printf("[Engine] start L4 TCP listener on %s with %d backend(s)", addr, len(routeCfg.Backends))
 			continue
 		}
 
 		server := &http.Server{Handler: http.HandlerFunc(state.handleRequest)}
-		e.routeServers = append(e.routeServers, server)
+		runtimeState.routeServers = append(runtimeState.routeServers, server)
 
 		go func(srv *http.Server, ln net.Listener) {
 			_ = srv.Serve(ln)
 		}(server, listener)
-		log.Printf("[Engine] start L7 HTTP listener on %s with %d backend(s)", addr, len(cfg.Backends))
+		log.Printf("[Engine] start L7 HTTP listener on %s with %d backend(s)", addr, len(routeCfg.Backends))
+	}
+	return runtimeState, nil
+}
+
+func (e *Engine) replaceRouteRuntime(currentCfg, nextCfg Config) error {
+	currentRuntime := e.snapshotRouteRuntime()
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := currentRuntime.shutdown(shutdownCtx); err != nil {
+		log.Printf("[Reload] warning: shutdown existing listeners returned: %v", err)
+	}
+	e.installRouteRuntime(nil)
+
+	nextRuntime, err := e.startRouteRuntime(nextCfg)
+	if err != nil {
+		restoreRuntime, restoreErr := e.startRouteRuntime(currentCfg)
+		if restoreErr != nil {
+			e.setConfig(currentCfg)
+			return errors.Join(
+				fmt.Errorf("activate config failed: %w", err),
+				fmt.Errorf("restore previous listeners failed: %w", restoreErr),
+			)
+		}
+		e.installRouteRuntime(restoreRuntime)
+		e.setConfig(currentCfg)
+		return fmt.Errorf("activate config failed: %w", err)
+	}
+
+	e.installRouteRuntime(nextRuntime)
+	e.setConfig(nextCfg)
+	return nil
+}
+
+func (e *Engine) snapshotRouteRuntime() routeRuntime {
+	return routeRuntime{
+		routeServers: append([]*http.Server(nil), e.routeServers...),
+		routes:       e.routes,
+		tcpListeners: append([]net.Listener(nil), e.tcpListeners...),
+	}
+}
+
+func (e *Engine) installRouteRuntime(runtimeState *routeRuntime) {
+	if runtimeState == nil {
+		e.routeServers = nil
+		e.routes = nil
+		e.tcpListeners = nil
+		return
+	}
+	e.routeServers = runtimeState.routeServers
+	e.routes = runtimeState.routes
+	e.tcpListeners = runtimeState.tcpListeners
+}
+
+func (r routeRuntime) shutdown(ctx context.Context) error {
+	var errs []error
+
+	for _, srv := range r.routeServers {
+		if err := srv.Shutdown(ctx); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	for _, ln := range r.tcpListeners {
+		if err := ln.Close(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+
+	if len(errs) > 0 {
+		return errors.Join(errs...)
 	}
 	return nil
 }
 
+func (e *Engine) configSnapshot() Config {
+	e.cfgMu.RLock()
+	defer e.cfgMu.RUnlock()
+	return e.cfg.clone()
+}
+
+func (e *Engine) trustedOriginsSnapshot() []string {
+	e.cfgMu.RLock()
+	defer e.cfgMu.RUnlock()
+	return append([]string(nil), e.cfg.TrustedOrigins...)
+}
+
+func (e *Engine) setConfig(cfg Config) {
+	e.cfgMu.Lock()
+	e.cfg = cfg
+	e.cfgMu.Unlock()
+}
+
 // GetStatus 实现 dashboard.MeshState 接口，收集底层进程快照
 func (e *Engine) GetStatus() map[string]dashboard.RouteStatus {
+	cfg := e.configSnapshot()
+
 	e.procMu.Lock()
-	defer e.procMu.Unlock()
+	processes := make(map[string]*ProcessInfo, len(e.process))
+	for port, info := range e.process {
+		processes[port] = info
+	}
+	e.procMu.Unlock()
 
 	result := make(map[string]dashboard.RouteStatus)
-	for port, route := range e.cfg.Routes {
+	for port, route := range cfg.Routes {
 		if isInternalRoute(route) {
 			continue
 		}
@@ -183,7 +316,7 @@ func (e *Engine) GetStatus() map[string]dashboard.RouteStatus {
 
 			targetAddr := net.JoinHostPort(backend.InternalHost, backend.InternalPort)
 
-			if info, exists := e.process[backend.InternalPort]; exists && info.Cmd.Process != nil {
+			if info, exists := processes[backend.InternalPort]; exists && info.Cmd.Process != nil {
 				backendStatus.Status = "Running"
 				backendStatus.PID = info.Cmd.Process.Pid
 				backendStatus.Uptime = time.Since(info.StartTime).Round(time.Second).String()
@@ -202,26 +335,34 @@ func (e *Engine) GetStatus() map[string]dashboard.RouteStatus {
 // KillProcess 实现 dashboard.MeshState 接口，支持手动kill底层进程
 func (e *Engine) KillProcess(port string) error {
 	e.procMu.Lock()
-	defer e.procMu.Unlock()
-
 	info, exists := e.process[port]
 	if !exists {
+		e.procMu.Unlock()
 		return fmt.Errorf("target port %s not found or suspended", port)
 	}
 
 	if info.Cmd.Process == nil {
+		e.procMu.Unlock()
 		return fmt.Errorf("target port %s process is not initialized", port)
 	}
 
-	log.Printf("[Dashboard] force kill process PID: %d Port: %s", info.Cmd.Process.Pid, port)
+	cmd := info.Cmd
+	pid := cmd.Process.Pid
+	e.procMu.Unlock()
 
-	// 发送 kill 信号
-	// 进程结束后，warden.go中的cmd.Wait()会捕获并安全运行map清理工作
-	err := info.Cmd.Process.Kill()
-	// 忽略进程已经结束 ErrProcessDone 或 Windows 下进程句柄失效 invalid argument 错误
-	if err != nil && !errors.Is(err, os.ErrProcessDone) && !strings.Contains(strings.ToLower(err.Error()), "invalid argument") {
+	log.Printf("[Dashboard] force kill process PID: %d Port: %s", pid, port)
+
+	if err := killManagedCmd(cmd); err != nil {
 		return fmt.Errorf("force kill process failed: %w", err)
 	}
+
+	// 立即清理快照，避免 Dashboard 在 Wait goroutine 回收前继续显示旧 PID/Uptime。
+	e.procMu.Lock()
+	if current, exists := e.process[port]; exists && current.Cmd == cmd {
+		delete(e.process, port)
+	}
+	e.procMu.Unlock()
+
 	return nil
 }
 
@@ -238,33 +379,28 @@ func (e *Engine) Shutdown(ctx context.Context) error {
 		_ = e.dashboardListener.Close()
 	}
 
-	// 2.1 优雅关闭所有的 HTTP 代理端口，拒绝新请求但等待进行中的请求处理完毕
-	for _, srv := range e.routeServers {
-		if err := srv.Shutdown(ctx); err != nil {
-			errs = append(errs, err)
-		}
-	}
-
-	// 2.2 关闭所有 L4 TCP 监听器，中断新连接进入
-	for _, ln := range e.tcpListeners {
-		if err := ln.Close(); err != nil {
-			errs = append(errs, err)
-		}
+	if err := e.snapshotRouteRuntime().shutdown(ctx); err != nil {
+		errs = append(errs, err)
 	}
 
 	// 3. 安全终结所有由 GopherMesh 拉起的业务子进程
 	e.procMu.Lock()
+	processes := make(map[string]*ProcessInfo, len(e.process))
 	for port, info := range e.process {
-		if info.Cmd.Process != nil {
-			log.Printf("[Shutdown] killing process PID: %d Port: %s", info.Cmd.Process.Pid, port)
-
-			err := info.Cmd.Process.Kill()
-			if err != nil && !errors.Is(err, os.ErrProcessDone) && !strings.Contains(strings.ToLower(err.Error()), "invalid argument") {
-				errs = append(errs, fmt.Errorf("force kill PID: %d failed: %v", info.Cmd.Process.Pid, err))
-			}
-		}
+		processes[port] = info
 	}
 	e.procMu.Unlock()
+
+	for port, info := range processes {
+		if info.Cmd.Process == nil {
+			continue
+		}
+		log.Printf("[Shutdown] killing process PID: %d Port: %s", info.Cmd.Process.Pid, port)
+
+		if err := killManagedCmd(info.Cmd); err != nil {
+			errs = append(errs, fmt.Errorf("force kill PID: %d failed: %v", info.Cmd.Process.Pid, err))
+		}
+	}
 
 	if len(errs) > 0 {
 		return errors.Join(errs...)
@@ -306,4 +442,122 @@ func isAddrInUse(err error) bool {
 	}
 	return strings.Contains(strings.ToLower(err.Error()), "address already in use") ||
 		strings.Contains(strings.ToLower(err.Error()), "bind")
+}
+
+// GetConfigJSON 返回当前 Routes 的 JSON 字符串
+func (e *Engine) GetConfigJSON() []byte {
+	// 只暴露 Routes 给前端编辑，保护核心的 DashboardHost 等配置
+	data, _ := json.MarshalIndent(e.configSnapshot().Routes, "", "  ")
+	return data
+}
+
+// ReloadConfig 接收前端传来的新 JSON，验证、落盘、并执行平滑重载
+func (e *Engine) ReloadConfig(rawJSON []byte) error {
+	e.reloadMu.Lock()
+	defer e.reloadMu.Unlock()
+
+	// 1. 解析前端传来的纯 Routes JSON
+	var newRoutes map[string]RouteConfig
+	if err := json.Unmarshal(rawJSON, &newRoutes); err != nil {
+		return fmt.Errorf("parse JSON failed: %w", err)
+	}
+
+	// 2. 组装新配置并验证合法性
+	oldCfg := e.configSnapshot()
+	newCfg := oldCfg
+	newCfg.Routes = newRoutes
+	normalized, err := newCfg.Normalize()
+	if err != nil {
+		return fmt.Errorf("failed to check new config: %w", err)
+	}
+
+	log.Printf("[Dashboard] hot reloading...")
+
+	// 3. 先切换 runtime；若新配置无法接管监听器，会自动恢复旧配置
+	if err := e.replaceRouteRuntime(oldCfg, normalized); err != nil {
+		return fmt.Errorf("bind new port failed: %w", err)
+	}
+
+	// 4. 切换成功后再原子落盘；若落盘失败，回滚到旧配置，避免内存与磁盘状态分叉
+	if normalized.ConfigPath != "" {
+		if err := SaveConfig(normalized.ConfigPath, normalized); err != nil {
+			if rollbackErr := e.replaceRouteRuntime(normalized, oldCfg); rollbackErr != nil {
+				return errors.Join(
+					fmt.Errorf("save config failed: %w", err),
+					fmt.Errorf("rollback runtime failed: %w", rollbackErr),
+				)
+			}
+			return fmt.Errorf("save config failed: %w", err)
+		}
+	}
+
+	e.killRemovedProcesses(normalized)
+
+	log.Printf("[Dashboard] hot reload success")
+	return nil
+}
+
+func (e *Engine) killRemovedProcesses(newCfg Config) {
+	activePorts := make(map[string]struct{})
+	for _, route := range newCfg.Routes {
+		for _, backend := range route.Backends {
+			activePorts[backend.InternalPort] = struct{}{}
+		}
+	}
+
+	e.procMu.Lock()
+	processes := make(map[string]*ProcessInfo)
+	for port, info := range e.process {
+		if _, keep := activePorts[port]; !keep {
+			processes[port] = info
+		}
+	}
+	e.procMu.Unlock()
+
+	for port, info := range processes {
+		log.Printf("[Reload] kill abandoned zombie Port: %s", port)
+		if err := killManagedCmd(info.Cmd); err != nil {
+			log.Printf("[Reload] warning: kill abandoned Port %s failed: %v", port, err)
+		}
+	}
+}
+
+func openBrowser(url string) {
+	var err error
+	switch runtime.GOOS {
+	case "linux":
+		err = exec.Command("xdg-open", url).Start()
+	case "windows":
+		err = exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
+	case "darwin":
+		err = exec.Command("open", url).Start()
+	}
+	// 核心诉求：无头环境弹不出来也无所谓，直接屏蔽错误，绝不影响主线程
+	_ = err
+}
+
+func killManagedCmd(cmd *exec.Cmd) error {
+	if cmd == nil || cmd.Process == nil {
+		return nil
+	}
+
+	if runtime.GOOS == "windows" {
+		pid := strconv.Itoa(cmd.Process.Pid)
+		output, err := exec.Command("taskkill", "/PID", pid, "/T", "/F").CombinedOutput()
+		if err == nil {
+			return nil
+		}
+
+		lower := strings.ToLower(err.Error() + " " + string(output))
+		if strings.Contains(lower, "not found") || strings.Contains(lower, "no running instance") {
+			return nil
+		}
+		return fmt.Errorf("taskkill PID %s failed: %w: %s", pid, err, strings.TrimSpace(string(output)))
+	}
+
+	err := cmd.Process.Kill()
+	if err != nil && !errors.Is(err, os.ErrProcessDone) && !strings.Contains(strings.ToLower(err.Error()), "invalid argument") {
+		return err
+	}
+	return nil
 }

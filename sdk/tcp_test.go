@@ -134,3 +134,47 @@ func TestEngineStartRoutesTCPRoundRobinAcrossBackends(t *testing.T) {
 		t.Fatalf("second response = %q, want %q", got, "B:second")
 	}
 }
+
+func TestRouteConnectBackendIPHashPinsClientIP(t *testing.T) {
+	portA, shutdownA := startTCPBackend(t, "A:")
+	defer shutdownA()
+
+	portB, shutdownB := startTCPBackend(t, "B:")
+	defer shutdownB()
+
+	engine := newTestEngine(Config{})
+	state := newRouteState(engine, "8081", RouteConfig{
+		Name:        "TCP IP Hash",
+		Protocol:    "tcp",
+		LoadBalance: loadBalanceIPHash,
+		Backends: []BackendConfig{
+			{Name: "backend-a", Cmd: "worker", InternalPort: portA},
+			{Name: "backend-b", Cmd: "worker", InternalPort: portB},
+		},
+	})
+
+	conn1, backend1, err := state.connectBackend(context.Background(), "10.0.0.1:3000")
+	if err != nil {
+		t.Fatalf("connectBackend(client-1 first) error = %v", err)
+	}
+	_ = conn1.Close()
+
+	conn2, backend2, err := state.connectBackend(context.Background(), "10.0.0.1:4000")
+	if err != nil {
+		t.Fatalf("connectBackend(client-1 second) error = %v", err)
+	}
+	_ = conn2.Close()
+
+	conn3, backend3, err := state.connectBackend(context.Background(), "10.0.0.2:5000")
+	if err != nil {
+		t.Fatalf("connectBackend(client-2) error = %v", err)
+	}
+	_ = conn3.Close()
+
+	if backend1.cfg.Name != backend2.cfg.Name {
+		t.Fatalf("same client IP selected backends %q and %q, want stable pinning", backend1.cfg.Name, backend2.cfg.Name)
+	}
+	if backend1.cfg.Name == backend3.cfg.Name {
+		t.Fatalf("different client IPs selected same backend %q, want different hash buckets", backend1.cfg.Name)
+	}
+}

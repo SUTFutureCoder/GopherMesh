@@ -3,6 +3,7 @@ package dashboard
 import (
 	_ "embed"
 	"encoding/json"
+	"io"
 	"net"
 	"net/http"
 	"strings"
@@ -34,6 +35,8 @@ type MeshState interface {
 	GetStatus() map[string]RouteStatus
 	GetLogs(port string) []string // 新增获取日志接口
 	KillProcess(port string) error
+	GetConfigJSON() []byte
+	ReloadConfig(rawJSON []byte) error
 }
 
 // Serve 启动无头控制台的 API 服务
@@ -124,6 +127,42 @@ func Serve(ln net.Listener, state MeshState) error {
 			"code": 200,
 			"msg":  "Process killed successfully",
 		})
+	})
+
+	mux.HandleFunc("/api/config", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodOptions {
+			setHeaders(w)
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		setHeaders(w)
+
+		// GET: 获取当前路由 JSON
+		if r.Method == http.MethodGet {
+			w.Write(state.GetConfigJSON())
+			return
+		}
+
+		// POST: 提交新 JSON 并触发重载
+		if r.Method == http.MethodPost {
+			body, _ := io.ReadAll(r.Body)
+			if err := state.ReloadConfig(body); err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				json.NewEncoder(w).Encode(map[string]interface{}{
+					"code":  400,
+					"error": err.Error(),
+				})
+				return
+			}
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"code": 200,
+				"msg":  "Config reloaded successfully",
+			})
+			return
+		}
+
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 	})
 
 	httpServer := &http.Server{Handler: mux}

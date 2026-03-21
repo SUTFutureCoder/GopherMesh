@@ -39,11 +39,7 @@
         .dot { width: 10px; height: 10px; border-radius: 50%; background-color: var(--text-muted); }
         .dot.running { background-color: var(--accent-green); box-shadow: 0 0 8px var(--accent-green); animation: pulse 2s infinite; }
 
-        @keyframes pulse {
-            0% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7); }
-            70% { box-shadow: 0 0 0 6px rgba(34, 197, 94, 0); }
-            100% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0); }
-        }
+        @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7); } 70% { box-shadow: 0 0 0 6px rgba(34, 197, 94, 0); } 100% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0); } }
 
         .card-route { font-size: 12px; color: var(--accent-blue); font-weight: bold; letter-spacing: 0.5px; text-transform: uppercase; margin-bottom: 4px; }
         .card-title { font-size: 18px; font-weight: 600; margin-bottom: 8px; padding-right: 70px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -61,9 +57,17 @@
         /* Modal Styles */
         .modal-overlay { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.8); z-index: 50; justify-content: center; align-items: center; padding: 20px; backdrop-filter: blur(4px); }
         .modal-overlay.active { display: flex; }
-        .modal-content { background: var(--bg-card); width: 100%; max-width: 850px; height: 80vh; border-radius: 8px; border: 1px solid #4b5563; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5); }
+        .modal-content { background: var(--bg-card); width: 100%; max-width: 850px; border-radius: 8px; border: 1px solid #4b5563; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5); }
         .modal-header { padding: 15px 20px; border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; background: #111827; }
-        .modal-body { flex: 1; padding: 15px; background: #000; color: #4ade80; font-family: 'Courier New', Courier, monospace; font-size: 13px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; line-height: 1.4; }
+        .modal-body { flex: 1; padding: 20px; background: var(--bg-card); color: var(--text-main); font-size: 14px; overflow-y: auto; max-height: 80vh; }
+
+        /* Form Styles */
+        .form-group { margin-bottom: 15px; }
+        .form-label { display: block; font-size: 13px; color: var(--text-muted); margin-bottom: 6px; }
+        .form-control { width: 100%; background: #111827; border: 1px solid var(--border-color); color: white; padding: 10px 12px; border-radius: 4px; font-family: monospace; font-size: 14px; transition: border-color 0.2s; }
+        .form-control:focus { outline: none; border-color: var(--accent-blue); }
+        .form-row { display: flex; gap: 15px; }
+        .form-row > .form-group { flex: 1; }
 
         /* Custom Scrollbar */
         ::-webkit-scrollbar { width: 8px; height: 8px; }
@@ -77,103 +81,361 @@
     <header>
         <div>
             <h1>GopherMesh</h1>
-            <div class="subtitle">Scale-to-Zero Local Edge Proxy & Load Balancer</div>
+            <div class="subtitle">Local / Edge / Server Mesh Gateway & Process Orchestrator</div>
         </div>
-        <button class="btn-primary" onclick="openConfigModal()">+ 新增路由 / 端点</button>
+        <div style="display: flex; gap: 12px;">
+            <button class="btn-secondary" onclick="openJsonModal()">📝 编辑全局 JSON (Edit JSON)</button>
+            <button class="btn-primary" onclick="openFormModal()">+ 新增路由 / 端点 (Add Route / Endpoint)</button>
+        </div>
     </header>
 
-    <div id="grid" class="grid">
-    </div>
+    <div id="grid" class="grid"></div>
 </div>
 
 <div id="logModal" class="modal-overlay">
-    <div class="modal-content">
+    <div class="modal-content" style="height: 80vh;">
         <div class="modal-header">
             <h3 id="modalTitle" style="color: #60a5fa; font-family: monospace;">终端日志</h3>
             <div style="display: flex; gap: 10px;">
-                <button class="btn-secondary" style="background: transparent; border: 1px solid #4b5563;" onclick="fetchLogs()">⟳ 刷新</button>
-                <button class="btn-secondary" onclick="closeLogModal()">✕ 关闭</button>
+                <button class="btn-secondary" style="background: transparent; border: 1px solid #4b5563;" onclick="fetchLogs()">⟳ 刷新 (Refresh)</button>
+                <button class="btn-secondary" onclick="closeModal('logModal')">✕ 关闭 (Close)</button>
             </div>
         </div>
-        <div id="logContent" class="modal-body">等待连接网关...</div>
+        <div id="logContent" class="modal-body" style="background: #000; color: #4ade80; font-family: 'Courier New', Courier, monospace; white-space: pre-wrap; word-break: break-all;">等待连接网关...</div>
+    </div>
+</div>
+
+<div id="jsonModal" class="modal-overlay">
+    <div class="modal-content" style="max-width: 900px; height: 80vh;">
+        <div class="modal-header">
+            <h3 style="color: #fde047; font-family: monospace;">全局路由表 (Routes JSON)</h3>
+            <div style="display: flex; gap: 10px;">
+                <button class="btn-primary" onclick="saveJsonModal()">💾 保存并重载 (Save & Reload)</button>
+                <button class="btn-secondary" onclick="closeModal('jsonModal')">✕ 取消 (Cancel)</button>
+            </div>
+        </div>
+        <div class="modal-body" style="padding: 0; display: flex; flex-direction: column;">
+            <textarea id="jsonContent" spellcheck="false" style="width: 100%; flex: 1; background: #000; color: #fde047; font-family: 'Courier New', monospace; font-size: 14px; padding: 20px; border: none; outline: none; resize: none;"></textarea>
+        </div>
+    </div>
+</div>
+
+<div id="formModal" class="modal-overlay">
+    <div class="modal-content" style="max-width: 650px;">
+        <div class="modal-header">
+            <h3 id="formModalTitle" style="color: #60a5fa; font-family: monospace;">> 编辑端点</h3>
+            <div style="display: flex; gap: 10px;">
+                <button id="deleteBackendBtn" class="btn-danger" style="display: none;" onclick="deleteBackendFromForm()">删除 (Delete)</button>
+                <button class="btn-primary" onclick="saveFormModal()">💾 保存并重载 (Save & Reload)</button>
+                <button class="btn-secondary" onclick="closeModal('formModal')">✕ 取消 (Cancel)</button>
+            </div>
+        </div>
+        <div class="modal-body">
+            <form id="endpointForm" onsubmit="event.preventDefault();">
+                <h4 style="margin-bottom: 12px; border-bottom: 1px solid #374151; padding-bottom: 6px; color: #93c5fd;">入站路由规则 (Route)</h4>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">对外暴露端口 (Public Port) *</label>
+                        <input type="text" id="f_publicPort" class="form-control" placeholder="如: 8080" required>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">协议 (Protocol)</label>
+                        <select id="f_protocol" class="form-control">
+                            <option value="http">HTTP</option>
+                            <option value="tcp">TCP</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">负载均衡 (Load Balance)</label>
+                        <select id="f_loadBalance" class="form-control">
+                            <option value="round_robin">round_robin</option>
+                            <option value="least_conn">least_conn</option>
+                            <option value="ip_hash">ip_hash</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">路由名称 (Route Name)</label>
+                    <input type="text" id="f_routeName" class="form-control" placeholder="如: Web-API-Route">
+                </div>
+
+                <h4 style="margin-top: 24px; margin-bottom: 12px; border-bottom: 1px solid #374151; padding-bottom: 6px; color: #fde047;">目标后端节点 (Backend)</h4>
+                <div class="form-group">
+                    <label class="form-label">节点名称 (Backend Name)</label>
+                    <input type="text" id="f_backendName" class="form-control" placeholder="如: worker-node-1">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">启动命令 (Cmd) <span style="color: #6b7280; font-size: 12px; font-weight: normal; margin-left: 8px;">留空即为不拉起进程的“纯反向代理模式”</span></label>
+                    <input type="text" id="f_cmd" class="form-control" placeholder="如: python 或 ./server.exe">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">启动参数 (Args) <span style="color: #6b7280; font-size: 12px; font-weight: normal; margin-left: 8px;">使用空格分隔</span></label>
+                    <input type="text" id="f_args" class="form-control" placeholder="如: main.py --port 9090">
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">目标主机 (Target Host)</label>
+                        <input type="text" id="f_internalHost" class="form-control" value="127.0.0.1">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">目标端口 (Target Port) *</label>
+                        <input type="text" id="f_internalPort" class="form-control" placeholder="如: 9090" required>
+                    </div>
+                </div>
+            </form>
+        </div>
     </div>
 </div>
 
 <script>
-    // 利用相对路径，完美契合同源策略与 go:embed 伺服
     const API_BASE = '/api';
     let currentLogPort = null;
+    let globalConfigCache = null; // 用于表单编辑时的数据源缓存
+    let editingInternalPort = null; // 标记当前正在编辑哪个后端的 internalPort
 
-    // 获取并渲染全局状态
+    /* ================= 基本轮询与渲染 ================= */
     async function fetchStatus() {
         try {
             const res = await fetch(`${API_BASE}/status`);
             const json = await res.json();
-            if (json.code === 200) {
-                renderGrid(json.data);
-            }
+            if (json.code === 200) renderGrid(json.data);
         } catch (e) {
             console.error("连接网关失败:", e);
             document.getElementById('grid').innerHTML = '<div style="color: #ef4444; padding: 20px; border: 1px dashed #ef4444; border-radius: 8px;">无法连接到 GopherMesh 后台进程，请确认已运行。</div>';
         }
     }
 
-    // 核心渲染引擎：处理 Route -> Backends 一对多嵌套
+    async function refreshDashboardState() {
+        await loadGlobalConfig();
+        await fetchStatus();
+    }
+
     function renderGrid(routes) {
         const grid = document.getElementById('grid');
         grid.innerHTML = '';
-
         for (const [publicPort, route] of Object.entries(routes)) {
             for (const ep of route.backends) {
                 const isRunning = ep.status === 'Running';
-
+                const canKill = isRunning && Number(ep.pid) > 0;
                 const card = document.createElement('div');
                 card.className = 'card';
                 card.innerHTML = `
-                        <div class="status-indicator">
-                            <div class="dot ${isRunning ? 'running' : ''}"></div>
-                            <span style="color: ${isRunning ? 'var(--accent-green)' : 'var(--text-muted)'}">${ep.status}</span>
-                        </div>
-                        <div class="card-route">ROUTE: ${route.name}</div>
-                        <div class="card-title" title="${ep.name}">${ep.name}</div>
-                        <div class="card-ports">
-                            Ext: <span class="highlight-blue">${publicPort}</span> → Int: <span class="highlight-yellow">${ep.internalHost}:${ep.internalPort}</span>
-                        </div>
-                        <div class="info-row">
-                            <span style="color: var(--text-muted)">Protocol / LB</span>
-                            <span class="info-value">${route.protocol.toUpperCase()} / ${route.loadBalance}</span>
-                        </div>
-                        <div class="info-row">
-                            <span style="color: var(--text-muted)">PID</span>
-                            <span class="info-value">${ep.pid || '---'}</span>
-                        </div>
-                        <div class="info-row">
-                            <span style="color: var(--text-muted)">Uptime</span>
-                            <span class="info-value" style="color: ${isRunning ? '#4ade80' : '#d1d5db'}">${ep.uptime || '---'}</span>
-                        </div>
-                        <div class="actions">
-                            <button class="btn-secondary" onclick="openLogModal('${ep.internalPort}')">日志 (Logs)</button>
-                            <button class="btn-secondary" onclick="openConfigModal('${ep.internalPort}')">配置 (Config)</button>
-                            ${isRunning ? `<button class="btn-danger" onclick="killProcess('${ep.internalPort}')">杀死 (Kill)</button>` : ''}
-                        </div>
-                    `;
+                    <div class="status-indicator">
+                        <div class="dot ${isRunning ? 'running' : ''}"></div>
+                        <span style="color: ${isRunning ? 'var(--accent-green)' : 'var(--text-muted)'}">${ep.status}</span>
+                    </div>
+                    <div class="card-route">ROUTE: ${route.name}</div>
+                    <div class="card-title" title="${ep.name}">${ep.name}</div>
+                    <div class="card-ports">
+                        Ext: <span class="highlight-blue">${publicPort}</span> → Int: <span class="highlight-yellow">${ep.internalHost}:${ep.internalPort}</span>
+                    </div>
+                    <div class="info-row">
+                        <span style="color: var(--text-muted)">Protocol / LB</span>
+                        <span class="info-value">${route.protocol.toUpperCase()} / ${route.loadBalance}</span>
+                    </div>
+                    <div class="info-row">
+                        <span style="color: var(--text-muted)">PID</span>
+                        <span class="info-value">${ep.pid || '---'}</span>
+                    </div>
+                    <div class="info-row">
+                        <span style="color: var(--text-muted)">Uptime</span>
+                        <span class="info-value" style="color: ${isRunning ? '#4ade80' : '#d1d5db'}">${ep.uptime || '---'}</span>
+                    </div>
+                    <div class="actions">
+                        <button class="btn-secondary" onclick="openLogModal('${ep.internalPort}')">日志 (Logs)</button>
+                        <button class="btn-secondary" onclick="openFormModal('${ep.internalPort}')">配置 (Config)</button>
+                        ${canKill ? `<button class="btn-danger" onclick="killProcess('${ep.internalPort}')">杀死 (Kill)</button>` : ''}
+                    </div>
+                `;
                 grid.appendChild(card);
             }
         }
     }
 
-    // 日志模态框逻辑
+    /* ================= 核心：配置拉取与提交 ================= */
+    async function loadGlobalConfig() {
+        const res = await fetch(`${API_BASE}/config`);
+        if (!res.ok) throw new Error("加载配置失败");
+        globalConfigCache = await res.json();
+        return globalConfigCache;
+    }
+
+    async function postConfig(jsonStr, onSuccess) {
+        try {
+            JSON.parse(jsonStr); // 预检格式
+            const res = await fetch(`${API_BASE}/config`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: jsonStr
+            });
+            const result = await res.json();
+            if (result.code === 200) {
+                try {
+                    await refreshDashboardState();
+                } catch (refreshError) {
+                    alert("配置已热重载成功，但界面刷新失败，请手动重试:\n" + refreshError);
+                }
+                if (onSuccess) onSuccess();
+            } else {
+                alert("网关拒绝热重载:\n" + result.error);
+            }
+        } catch (e) {
+            alert("JSON 格式错误或网关离线:\n" + e);
+        }
+    }
+
+    /* ================= 功能 1 & 2：可视化表单编辑与新增 ================= */
+    function removeBackendFromConfig(config, internalPort) {
+        for (const [port, route] of Object.entries(config)) {
+            if (route.backends) {
+                route.backends = route.backends.filter(b => b.internal_port !== internalPort);
+            }
+            if (!route.backends || route.backends.length === 0) {
+                delete config[port];
+            }
+        }
+    }
+
+    async function openFormModal(internalPort = null) {
+        editingInternalPort = internalPort;
+        document.getElementById('formModalTitle').innerText = internalPort ? `> 修改目标端点 (Target Port: ${internalPort})` : `> 新增路由 / 端点`;
+        document.getElementById('deleteBackendBtn').style.display = internalPort ? 'inline-block' : 'none';
+
+        try {
+            const latestConfig = await loadGlobalConfig();
+
+            // 1. 清空表单
+            document.getElementById('f_publicPort').value = '';
+            document.getElementById('f_routeName').value = '';
+            document.getElementById('f_protocol').value = 'http';
+            document.getElementById('f_loadBalance').value = 'round_robin';
+            document.getElementById('f_backendName').value = '';
+            document.getElementById('f_cmd').value = '';
+            document.getElementById('f_args').value = '';
+            document.getElementById('f_internalHost').value = '127.0.0.1';
+            document.getElementById('f_internalPort').value = '';
+
+            // 2. 如果是编辑模式，查找并回填数据
+            if (internalPort) {
+                for (const [pPort, route] of Object.entries(latestConfig)) {
+                    const backend = route.backends?.find(b => b.internal_port === internalPort);
+                    if (backend) {
+                        document.getElementById('f_publicPort').value = pPort;
+                        document.getElementById('f_routeName').value = route.name || '';
+                        document.getElementById('f_protocol').value = route.protocol || 'http';
+                        document.getElementById('f_loadBalance').value = route.load_balance || 'round_robin';
+                        document.getElementById('f_backendName').value = backend.name || '';
+                        document.getElementById('f_cmd').value = backend.cmd || '';
+                        document.getElementById('f_args').value = (backend.args || []).join(' '); // 数组转字符串
+                        document.getElementById('f_internalHost').value = backend.internal_host || '127.0.0.1';
+                        document.getElementById('f_internalPort').value = backend.internal_port || '';
+                        break;
+                    }
+                }
+            }
+            document.getElementById('formModal').classList.add('active');
+        } catch (e) {
+            alert("无法加载配置数据: " + e);
+        }
+    }
+
+    async function saveFormModal() {
+        const pPort = document.getElementById('f_publicPort').value.trim();
+        const iPort = document.getElementById('f_internalPort').value.trim();
+        if (!pPort || !iPort) {
+            alert("对外暴露端口 (Public Port) 和目标端口 (Target Port) 不能为空！");
+            return;
+        }
+
+        let latestConfig;
+        try {
+            latestConfig = await loadGlobalConfig();
+        } catch (e) {
+            alert("提交前无法同步最新配置:\n" + e);
+            return;
+        }
+
+        // 深拷贝现有配置
+        const newConfig = JSON.parse(JSON.stringify(latestConfig));
+
+        // 1. 如果是编辑旧节点，先把它从原有的路由中剔除
+        if (editingInternalPort) {
+            removeBackendFromConfig(newConfig, editingInternalPort);
+        }
+
+        // 2. 组装新节点数据
+        const argsStr = document.getElementById('f_args').value.trim();
+        const backend = {
+            name: document.getElementById('f_backendName').value.trim(),
+            cmd: document.getElementById('f_cmd').value.trim(),
+            args: argsStr ? argsStr.split(/\s+/) : [], // 字符串转数组
+            internal_host: document.getElementById('f_internalHost').value.trim() || "127.0.0.1",
+            internal_port: iPort
+        };
+
+        // 3. 将新节点挂载到对应的 Route 下
+        if (!newConfig[pPort]) {
+                // 新路由
+                newConfig[pPort] = {
+                    name: document.getElementById('f_routeName').value.trim() || "Route-" + pPort,
+                    protocol: document.getElementById('f_protocol').value,
+                    load_balance: document.getElementById('f_loadBalance').value,
+                    backends: []
+                };
+            } else {
+                // 已有路由追加：支持同时修改路由属性
+                const rName = document.getElementById('f_routeName').value.trim();
+                if (rName) newConfig[pPort].name = rName;
+                newConfig[pPort].protocol = document.getElementById('f_protocol').value;
+                newConfig[pPort].load_balance = document.getElementById('f_loadBalance').value;
+            }
+
+        newConfig[pPort].backends.push(backend);
+
+        // 4. 提交保存
+        await postConfig(JSON.stringify(newConfig, null, 2), () => closeModal('formModal'));
+    }
+
+    async function deleteBackendFromForm() {
+        if (!editingInternalPort) return;
+        if (!confirm(`确定要删除目标端口 [${editingInternalPort}] 的子配置吗？`)) return;
+
+        let latestConfig;
+        try {
+            latestConfig = await loadGlobalConfig();
+        } catch (e) {
+            alert("删除前无法同步最新配置:\n" + e);
+            return;
+        }
+
+        const newConfig = JSON.parse(JSON.stringify(latestConfig));
+        removeBackendFromConfig(newConfig, editingInternalPort);
+        await postConfig(JSON.stringify(newConfig, null, 2), () => closeModal('formModal'));
+    }
+
+    /* ================= 功能 3：全局 JSON 高级编辑 ================= */
+    async function openJsonModal() {
+        try {
+            const config = await loadGlobalConfig();
+            document.getElementById('jsonContent').value = JSON.stringify(config, null, 2);
+            document.getElementById('jsonModal').classList.add('active');
+        } catch (e) {
+            alert("无法读取配置: " + e);
+        }
+    }
+
+    async function saveJsonModal() {
+        const newJson = document.getElementById('jsonContent').value;
+        await postConfig(newJson, () => closeModal('jsonModal'));
+    }
+
+    /* ================= 日志与杀死进程 (不变) ================= */
     function openLogModal(port) {
         currentLogPort = port;
         document.getElementById('modalTitle').innerText = `> tail -f logs | port: ${port}`;
         document.getElementById('logModal').classList.add('active');
         document.getElementById('logContent').innerText = "加载中...";
         fetchLogs();
-    }
-
-    function closeLogModal() {
-        document.getElementById('logModal').classList.remove('active');
-        currentLogPort = null;
     }
 
     async function fetchLogs() {
@@ -184,45 +446,47 @@
             const json = await res.json();
             if (json.code === 200) {
                 content.innerText = json.data.length > 0 ? json.data.join('\n') : '暂无日志输出 (Process output is empty)...';
-                // 自动滚动到底部
                 content.scrollTop = content.scrollHeight;
             }
         } catch (e) {
-            content.innerText = "[Error] 无法获取日志，Mesh 进程可能已掉线或目标端口配置有误。";
+            content.innerText = "[Error] 无法获取日志，Mesh 进程可能已掉线。";
         }
     }
 
     async function killProcess(port) {
-        if (confirm(`【警告】确定要物理斩断内部端口 [${port}] 下的物理进程吗？\n下一次请求到达时，网关会将其重新冷启动。`)) {
+        if (confirm(`【警告】确定要物理杀死内部端口 [${port}] 下的物理进程吗？\n下一次请求到达时，网关会将其重新冷启动。`)) {
             try {
-                const res = await fetch(`${API_BASE}/process/${port}`, {
-                    method: 'DELETE'
-                });
+                const res = await fetch(`${API_BASE}/process/${port}`, { method: 'DELETE' });
                 const json = await res.json();
-
                 if (json.code === 200) {
-                    // kill成功，立刻强制拉取一次状态，你会看到绿色的呼吸灯瞬间熄灭变灰
-                    fetchStatus();
-                } else {
-                    alert("杀死失败: " + json.error);
+                    await fetchStatus();
+                    if (currentLogPort === port) await fetchLogs();
                 }
+                else alert("杀死失败: " + json.error);
             } catch (e) {
                 alert("网关请求失败: " + e);
             }
         }
     }
 
-    // 占位的配置修改接口
-    function openConfigModal(port) {
-        if (port) {
-            alert(`准备修改目标后端 [${port}]。等待后端实现：POST ${API_BASE}/config 热重载接口。`);
-        } else {
-            alert(`准备新增路由规则。等待后端实现：POST ${API_BASE}/config 热重载接口。`);
-        }
+    function closeModal(modalId) {
+        document.getElementById(modalId).classList.remove('active');
+        if (modalId === 'logModal') currentLogPort = null;
+        if (modalId === 'formModal') editingInternalPort = null;
     }
+    
+    // 监听全局键盘事件，按下 ESC 键自动关闭所有当前打开的弹窗
+    document.addEventListener('keydown', function(event) {
+        if (event.key === 'Escape' || event.keyCode === 27) {
+            const activeModals = document.querySelectorAll('.modal-overlay.active');
+            activeModals.forEach(modal => {
+                closeModal(modal.id);
+            });
+        }
+    });
 
-    // 启动轮询：每2秒拉取一次最新状态
-    fetchStatus();
+    // 启动轮询
+    refreshDashboardState();
     setInterval(fetchStatus, 2000);
 </script>
 </body>

@@ -23,6 +23,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("load config: %v", err)
 	}
+	cfg.ConfigPath = *configPath
 	if *dashHost != "" {
 		cfg.DashboardHost = *dashHost
 	}

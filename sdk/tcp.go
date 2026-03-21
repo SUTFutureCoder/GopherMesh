@@ -32,12 +32,14 @@ func (r *routeState) handleTCPConnection(clientConn net.Conn) {
 	ctx, cancel := context.WithTimeout(context.Background(), defaultStartTimeout)
 	defer cancel()
 
-	targetConn, backend, err := r.connectBackend(ctx)
+	targetConn, backend, err := r.connectBackend(ctx, clientConn.RemoteAddr().String())
 	if err != nil {
 		log.Printf("[L4 Proxy] backend selection failed [%s]: %v", r.cfg.Name, err)
 		return
 	}
 	defer targetConn.Close()
+	backend.acquire()
+	defer backend.release()
 
 	log.Printf("[L4 Proxy] %s -> backend %s (%s)", r.publicPort, backend.cfg.Name, backend.cfg.InternalPort)
 
@@ -67,9 +69,9 @@ func (r *routeState) handleTCPConnection(clientConn net.Conn) {
 	wg.Wait()
 }
 
-func (r *routeState) connectBackend(ctx context.Context) (net.Conn, *backendState, error) {
+func (r *routeState) connectBackend(ctx context.Context, remoteAddr string) (net.Conn, *backendState, error) {
 	var errs []error
-	for _, backend := range r.backendsInRoundRobinOrder() {
+	for _, backend := range r.backendsInLoadBalanceOrder(remoteAddr) {
 		if err := backend.ensureReady(ctx); err != nil {
 			errs = append(errs, err)
 			continue

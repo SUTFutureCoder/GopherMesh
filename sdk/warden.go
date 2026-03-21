@@ -90,7 +90,7 @@ func (e *Engine) waitForPort(ctx context.Context, targetAddr string, cmd *exec.C
 		case <-ctx.Done():
 			// 触发冷启动断路器：超时未就绪，必须强杀刚才拉起的进程，防止产生僵尸进程
 			log.Printf("[Warden] target %s ready timeout, kill zombie process PID: %d", targetAddr, cmd.Process.Pid)
-			_ = cmd.Process.Kill()
+			_ = killManagedCmd(cmd)
 			return fmt.Errorf("timeout waiting for target %s to become ready: %w", targetAddr, ctx.Err())
 
 		case <-ticker.C:

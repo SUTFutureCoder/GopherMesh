@@ -63,6 +63,37 @@ func startHTTPBackend(t *testing.T, label string) (string, func()) {
 	return strconv.Itoa(ln.Addr().(*net.TCPAddr).Port), shutdown
 }
 
+func startBlockingHTTPBackend(t *testing.T, label string, entered chan<- struct{}, release <-chan struct{}) (string, func()) {
+	t.Helper()
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("backend Listen() error = %v", err)
+	}
+
+	server := &http.Server{
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			select {
+			case entered <- struct{}{}:
+			default:
+			}
+			<-release
+			_, _ = fmt.Fprintf(w, "%s %s", label, r.URL.Path)
+		}),
+	}
+	go func() {
+		_ = server.Serve(ln)
+	}()
+
+	shutdown := func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = server.Shutdown(ctx)
+	}
+
+	return strconv.Itoa(ln.Addr().(*net.TCPAddr).Port), shutdown
+}
+
 func TestRouteHandleRequestInternalRouteIsCaseInsensitive(t *testing.T) {
 	t.Parallel()
 
@@ -245,6 +276,95 @@ func TestRouteHandleRequestRoundRobinAcrossReadyBackends(t *testing.T) {
 		if got := rec.Body.String(); got != want {
 			t.Fatalf("request %d body = %q, want %q", i, got, want)
 		}
+	}
+}
+
+func TestRouteHandleRequestLeastConnPrefersBackendWithFewestInflightRequests(t *testing.T) {
+	entered := make(chan struct{}, 1)
+	release := make(chan struct{})
+
+	portA, shutdownA := startBlockingHTTPBackend(t, "backend-a", entered, release)
+	defer shutdownA()
+
+	portB, shutdownB := startHTTPBackend(t, "backend-b")
+	defer shutdownB()
+
+	engine := newTestEngine(Config{
+		TrustedOrigins: []string{"*"},
+	})
+	state := newRouteState(engine, "8081", RouteConfig{
+		Name:        "least-conn-http",
+		Protocol:    "http",
+		LoadBalance: loadBalanceLeastConn,
+		Backends: []BackendConfig{
+			{Name: "A", Cmd: "worker", InternalPort: portA},
+			{Name: "B", Cmd: "worker", InternalPort: portB},
+		},
+	})
+
+	reqSlow := httptest.NewRequest(http.MethodGet, "http://mesh.local/slow", nil)
+	recSlow := httptest.NewRecorder()
+	doneSlow := make(chan struct{})
+	go func() {
+		state.handleRequest(recSlow, reqSlow)
+		close(doneSlow)
+	}()
+
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out waiting for first backend request to block")
+	}
+
+	reqFast := httptest.NewRequest(http.MethodGet, "http://mesh.local/fast", nil)
+	recFast := httptest.NewRecorder()
+	state.handleRequest(recFast, reqFast)
+
+	if recFast.Code != http.StatusOK {
+		t.Fatalf("fast request status = %d, want %d body=%s", recFast.Code, http.StatusOK, recFast.Body.String())
+	}
+	if got := recFast.Body.String(); got != "backend-b /fast" {
+		t.Fatalf("fast request body = %q, want %q", got, "backend-b /fast")
+	}
+
+	close(release)
+	select {
+	case <-doneSlow:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out waiting for slow request to finish")
+	}
+
+	if recSlow.Code != http.StatusOK {
+		t.Fatalf("slow request status = %d, want %d body=%s", recSlow.Code, http.StatusOK, recSlow.Body.String())
+	}
+	if got := recSlow.Body.String(); got != "backend-a /slow" {
+		t.Fatalf("slow request body = %q, want %q", got, "backend-a /slow")
+	}
+}
+
+func TestBackendStartOnceReturnsNilWhenTargetBecomesReadyBeforeSpawn(t *testing.T) {
+	t.Parallel()
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Listen() error = %v", err)
+	}
+	defer ln.Close()
+
+	port := strconv.Itoa(ln.Addr().(*net.TCPAddr).Port)
+	backend := &backendState{
+		route: &routeState{
+			engine: newTestEngine(Config{}),
+		},
+		cfg: BackendConfig{
+			Cmd:          "",
+			InternalHost: "127.0.0.1",
+			InternalPort: port,
+		},
+	}
+
+	if err := backend.startOnce(context.Background()); err != nil {
+		t.Fatalf("startOnce() error = %v, want nil when target is already ready", err)
 	}
 }
 
