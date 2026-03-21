@@ -14,12 +14,20 @@ import (
 
 func main() {
 	configPath := flag.String("config", "config.json", "Path to the GopherMesh config file")
+	dashHost := flag.String("dashboard-host", "", "Override dashboard host (e.g. 0.0.0.0 for LAN access)")
+	dashPort := flag.String("dashboard-port", "", "Override dashboard port")
 	flag.Parse()
 
 	// 1. 加载配置
 	cfg, err := mesh.LoadConfig(*configPath)
 	if err != nil {
 		log.Fatalf("load config: %v", err)
+	}
+	if *dashHost != "" {
+		cfg.DashboardHost = *dashHost
+	}
+	if *dashPort != "" {
+		cfg.DashboardPort = *dashPort
 	}
 
 	// 2. 初始化核心引擎

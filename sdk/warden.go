@@ -12,10 +12,9 @@ import (
 )
 
 // isReady 执行纯粹的 L4 TCP 端口嗅探，判断下游进程是否已经绑定了端口
-func (e *Engine) isReady(internalPort string) bool {
-	target := "127.0.0.1:" + internalPort
+func (e *Engine) isReady(targetAddr string) bool {
 	// 50ms 极速探测
-	conn, err := net.DialTimeout("tcp", target, 50*time.Millisecond)
+	conn, err := net.DialTimeout("tcp", targetAddr, 50*time.Millisecond)
 	if err != nil {
 		return false
 	}
@@ -77,23 +76,22 @@ func (e *Engine) spawnAndWait(ctx context.Context, cfg BackendConfig) error {
 	}()
 
 	// 5. 进入 TCP 探活轮询与死循环防御
-	return e.waitForPort(ctx, cfg.InternalPort, cmd)
+	targetAddr := net.JoinHostPort(cfg.InternalHost, cfg.InternalPort)
+	return e.waitForPort(ctx, targetAddr, cmd)
 }
 
 // waitForPort 每100ms探测一次端口，同时监控进程是否在启动期暴毙
-func (e *Engine) waitForPort(ctx context.Context, port string, cmd *exec.Cmd) error {
+func (e *Engine) waitForPort(ctx context.Context, targetAddr string, cmd *exec.Cmd) error {
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
-
-	target := "127.0.0.1:" + port
 
 	for {
 		select {
 		case <-ctx.Done():
 			// 触发冷启动断路器：超时未就绪，必须强杀刚才拉起的进程，防止产生僵尸进程
-			log.Printf("[Warden] port %s ready timeout, kill zombie process PID: %d", port, cmd.Process.Pid)
+			log.Printf("[Warden] target %s ready timeout, kill zombie process PID: %d", targetAddr, cmd.Process.Pid)
 			_ = cmd.Process.Kill()
-			return fmt.Errorf("timeout waiting for port %s to become ready: %w", port, ctx.Err())
+			return fmt.Errorf("timeout waiting for target %s to become ready: %w", targetAddr, ctx.Err())
 
 		case <-ticker.C:
 			// 防御机制：检查进程是否在启动的瞬间就崩溃
@@ -102,7 +100,7 @@ func (e *Engine) waitForPort(ctx context.Context, port string, cmd *exec.Cmd) er
 			}
 
 			// 尝试 TCP 握手
-			conn, err := net.DialTimeout("tcp", target, 50*time.Millisecond)
+			conn, err := net.DialTimeout("tcp", targetAddr, 50*time.Millisecond)
 			if err == nil {
 				// 握手成功，释放连接，连接正式就绪
 				_ = conn.Close()

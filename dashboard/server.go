@@ -1,15 +1,20 @@
 package dashboard
 
 import (
+	_ "embed"
 	"encoding/json"
 	"net"
 	"net/http"
 	"strings"
 )
 
+//go:embed dashboard.html
+var uiTemplate []byte
+
 // BackendStatus 表示单个后端实例的运行时状态
 type BackendStatus struct {
 	Name         string `json:"name"`
+	InternalHost string `json:"internalHost"`
 	InternalPort string `json:"internalPort"`
 	Status       string `json:"status"` // Dormant 休眠 或 Running 运行
 	PID          int    `json:"pid,omitempty"`
@@ -33,6 +38,16 @@ type MeshState interface {
 // Serve 启动无头控制台的 API 服务
 func Serve(ln net.Listener, state MeshState) error {
 	mux := http.NewServeMux()
+
+	// 挂载内嵌UI面板
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" && r.URL.Path != "/index.html" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write(uiTemplate)
+	})
 
 	// 中间件逻辑：设置通用的 JSON 和 CORS
 	setHeaders := func(w http.ResponseWriter) {

@@ -68,7 +68,7 @@ func NewEngine(cfg Config) (MeshEngine, error) {
 		return nil, fmt.Errorf("normalize config: %w", err)
 	}
 
-	listener, role, err := detectRole(normalized.DashboardPort)
+	listener, role, err := detectRole(normalized.DashboardHost, normalized.DashboardPort)
 	if err != nil {
 		return nil, fmt.Errorf("error detecting dashboard role: %w", err)
 	}
@@ -176,15 +176,18 @@ func (e *Engine) GetStatus() map[string]dashboard.RouteStatus {
 		for _, backend := range route.Backends {
 			backendStatus := dashboard.BackendStatus{
 				Name:         backend.Name,
+				InternalHost: backend.InternalHost,
 				InternalPort: backend.InternalPort,
 				Status:       "Dormant",
 			}
+
+			targetAddr := net.JoinHostPort(backend.InternalHost, backend.InternalPort)
 
 			if info, exists := e.process[backend.InternalPort]; exists && info.Cmd.Process != nil {
 				backendStatus.Status = "Running"
 				backendStatus.PID = info.Cmd.Process.Pid
 				backendStatus.Uptime = time.Since(info.StartTime).Round(time.Second).String()
-			} else if e.isReady(backend.InternalPort) {
+			} else if e.isReady(targetAddr) {
 				backendStatus.Status = "Running"
 			}
 
@@ -247,8 +250,8 @@ func (e *Engine) handleHealthcheck(w http.ResponseWriter, r *http.Request) {
 }
 
 // detectRole 尝试绑定 Dashboard 端口以决定当前进程的角色
-func detectRole(port string) (net.Listener, Role, error) {
-	addr := "127.0.0.1:" + port
+func detectRole(host, port string) (net.Listener, Role, error) {
+	addr := net.JoinHostPort(host, port)
 	listener, err := net.Listen("tcp", addr)
 
 	// 1. 绑定成功，我们是 Master 节点
