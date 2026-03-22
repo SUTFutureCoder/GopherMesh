@@ -129,20 +129,48 @@ function Publish-GitHubRelease {
         throw "GitHub CLI 'gh' was not found in PATH."
     }
 
-    & gh release view $VersionTag *> $null
-    $releaseExists = ($LASTEXITCODE -eq 0)
+    $nativeCommandPreferenceSupported = Test-Path variable:PSNativeCommandUseErrorActionPreference
+    if ($nativeCommandPreferenceSupported) {
+        $previousNativeCommandPreference = $PSNativeCommandUseErrorActionPreference
+        $PSNativeCommandUseErrorActionPreference = $false
+    }
 
-    if ($releaseExists) {
-        & gh release upload $VersionTag @Assets --clobber
-        if ($LASTEXITCODE -ne 0) {
-            throw "gh release upload failed for $VersionTag"
+    try {
+        $createOutput = & gh release create $VersionTag @Assets --title $VersionTag --generate-notes 2>&1 | Out-String
+        $createExitCode = $LASTEXITCODE
+    }
+    finally {
+        if ($nativeCommandPreferenceSupported) {
+            $PSNativeCommandUseErrorActionPreference = $previousNativeCommandPreference
         }
+    }
+
+    if ($createExitCode -eq 0) {
         return
     }
 
-    & gh release create $VersionTag @Assets --title $VersionTag --generate-notes
-    if ($LASTEXITCODE -ne 0) {
-        throw "gh release create failed for $VersionTag"
+    $normalizedCreateOutput = $createOutput.ToLowerInvariant()
+    if ($normalizedCreateOutput -notmatch "already exists") {
+        throw "gh release create failed for $VersionTag`n$createOutput"
+    }
+
+    if ($nativeCommandPreferenceSupported) {
+        $previousNativeCommandPreference = $PSNativeCommandUseErrorActionPreference
+        $PSNativeCommandUseErrorActionPreference = $false
+    }
+
+    try {
+        $uploadOutput = & gh release upload $VersionTag @Assets --clobber 2>&1 | Out-String
+        $uploadExitCode = $LASTEXITCODE
+    }
+    finally {
+        if ($nativeCommandPreferenceSupported) {
+            $PSNativeCommandUseErrorActionPreference = $previousNativeCommandPreference
+        }
+    }
+
+    if ($uploadExitCode -ne 0) {
+        throw "gh release upload failed for $VersionTag`n$uploadOutput"
     }
 }
 

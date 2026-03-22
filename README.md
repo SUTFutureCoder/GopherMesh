@@ -286,7 +286,27 @@ $tcp.Close()
 - `17081`：L4 TCP Echo
 - `17082`：L4 TCP Uppercase
 
-### 5. SDK 最小示例
+### 5. Release 样例
+
+本地生成跨平台发布包：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\release.ps1 -Version v1.2.2
+```
+
+构建并自动发布到 GitHub Release：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\release.ps1 -Version v1.2.2 -Publish
+```
+
+如果已经本地构建完成，也可以直接用 `gh` 手动创建 Release：
+
+```powershell
+gh release create v1.2.2 .\dist\v1.2.2\* --title "v1.2.2" --generate-notes
+```
+
+### 6. SDK 最小示例
 
 如果你需要把 GopherMesh 引擎嵌入自己的 Go 程序，可以使用 `sdk`：
 
