@@ -342,6 +342,18 @@ func TestRouteHandleRequestLeastConnPrefersBackendWithFewestInflightRequests(t *
 	}
 }
 
+func TestBackendTargetAddressDefaultsBlankHostToLocalhost(t *testing.T) {
+	backend := &backendState{
+		cfg: BackendConfig{
+			InternalPort: "19090",
+		},
+	}
+
+	if got := backend.targetAddress(); got != "127.0.0.1:19090" {
+		t.Fatalf("targetAddress() = %q, want %q", got, "127.0.0.1:19090")
+	}
+}
+
 func TestBackendStartOnceReturnsNilWhenTargetBecomesReadyBeforeSpawn(t *testing.T) {
 	t.Parallel()
 

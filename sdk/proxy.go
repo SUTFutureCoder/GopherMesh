@@ -189,7 +189,11 @@ func extractClientIP(remoteAddr string) string {
 }
 
 func (b *backendState) targetAddress() string {
-	return net.JoinHostPort(b.cfg.InternalHost, b.cfg.InternalPort)
+	host := strings.TrimSpace(b.cfg.InternalHost)
+	if host == "" {
+		host = defaultLocalHost
+	}
+	return net.JoinHostPort(host, b.cfg.InternalPort)
 }
 
 func (b *backendState) acquire() {

@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 )
 
@@ -80,7 +81,11 @@ func (e *Engine) spawnAndWait(ctx context.Context, cfg BackendConfig) error {
 	}()
 
 	// 5. 进入 TCP 探活轮询与死循环防御
-	targetAddr := net.JoinHostPort(cfg.InternalHost, cfg.InternalPort)
+	host := cfg.InternalHost
+	if strings.TrimSpace(host) == "" {
+		host = defaultLocalHost
+	}
+	targetAddr := net.JoinHostPort(host, cfg.InternalPort)
 	return e.waitForPort(ctx, targetAddr, cmd)
 }
 
