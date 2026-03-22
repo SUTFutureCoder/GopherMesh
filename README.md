@@ -5,11 +5,49 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/SUTFutureCoder/gophermesh)](https://goreportcard.com/report/github.com/xingchen/gophermesh)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-**GopherMesh** 是一套极其轻量、跨平台的本地/边缘/服务器侧 Mesh 接入与进程编排框架。它旨在打破浏览器沙盒（Browser Sandbox）与操作系统原生算力（Native OS Capability）之间的物理隔阂，为现代 Web 应用提供“零延迟、高权限、自动化”的本机或近端算力调度能力。
+**GopherMesh** 是一套轻量、跨平台的本地/边缘/服务器侧 Mesh 接入与进程编排框架。它旨在打通浏览器、桌面前端、上层业务系统与本机/近端服务之间的调用链，为现代应用提供稳定的本地入口、自动化进程拉起与统一路由能力。
 
-与其说它是一个工具，不如说它是一个 **“善意的特洛伊木马”** ：它静默地驻留在底层，仅在网页、桌面端或上层业务需要调用高性能本地/近端服务（如 Python AI 推理、C++ 图像处理、硬件串口通信、Go 算法服务）时，才按需唤醒并透明转发流量。
+与其说它是一个工具，不如说它是一个 **“善意的特洛伊木马”** ：它静默驻留在底层，仅在网页、桌面端或上层业务需要调用本地/近端能力时，才按需唤醒并透明转发流量，例如 Go/Python/C++ 服务、本地 AI 推理、数据处理、硬件通信、自动化脚本或内部 TCP 服务。
 
 相较于传统只负责反向代理的组件，**GopherMesh** 更强调“预置配置即开箱可用”“按请求冷启动本地进程”“HTTP/TCP 双协议接入”“可视化热重载管理”。因此它不仅适合桌面环境，也适合单机部署、边缘节点和轻量服务器场景。它的定位不是单纯的 proxy，而是一个轻量级的 `mesh gateway + process orchestrator`。
+
+## 适用场景 (Use Cases)
+
+- 浏览器前端或桌面前端需要调用本地高性能服务
+- AI Agent / Copilot / Web UI 需要稳定访问本机 CLI、模型服务或算法服务
+- 将独立的 Go / Python / C++ 进程统一暴露为固定 HTTP/TCP 入口
+- 本地工具、科研计算、数据处理、图像音频处理等任务需要按需拉起
+- 硬件串口、局域网设备、本地守护进程或内网服务需要被统一编排与转发
+
+---
+
+## 桌面自举模式 (Desktop Bootstrap Pattern)
+
+对于桌面前端，推荐采用两段式接入：
+
+1. 先探测本地 `HTTP/TCP` 端口是否已就绪。
+2. 若本地服务不存在，再通过自定义协议拉起本地 launcher，例如 `gophermesh://launch`。
+3. 进程拉起后，正式业务数据仍然走本地 `HTTP/TCP`，不要走自定义协议。
+
+`port` 和 `conf` 都是可选参数：
+
+- 不传 `port`：只负责确保 launcher / mesh 主进程已启动
+- 传 `port`：额外校验该公网关路由是否存在，并在已就绪时直接忽略重复拉起
+- 不传 `conf`：默认使用启动后的 `config.json`，若不存在则按默认逻辑自动生成
+- 传 `conf`：显式指定启动时使用的配置文件
+
+`GopherMesh` CLI 现已内置这套协议能力：
+
+- 正常启动时会 best-effort 注册 `gophermesh://`
+- 可通过 `-protocol-url "gophermesh://launch"` 处理外部协议拉起
+- 可通过 `gophermesh://launch?port=18081` 指定目标公网关路由
+- 可通过 `gophermesh://launch?port=18081&conf=sample/sample_config.json` 指定启动时使用的配置文件
+- 可通过 `-noprotocol` 禁用协议注册与处理
+
+注意：
+
+- 若通过 `go run .` 启动，Go 会生成临时可执行文件；这类临时路径不会被注册为长期协议入口。
+- 要让 `gophermesh://` 在进程退出后仍可重新拉起，请先构建正式二进制并运行一次。
 
 ---
 
@@ -90,19 +128,19 @@ sequenceDiagram
   "dashboard_port": "9999",
   "routes": {
     "8081": {
-      "name": "Bayesian-Optimizer",
+      "name": "Local-Service",
       "load_balance": "round_robin",
       "backends": [
         {
-          "name": "optimizer-a",
+          "name": "service-a",
           "cmd": "python",
-          "args": ["opt.py", "--port", "9081"],
+          "args": ["app.py", "--port", "9081"],
           "internal_port": "9081"
         },
         {
-          "name": "optimizer-b",
+          "name": "service-b",
           "cmd": "python",
-          "args": ["opt.py", "--port", "9082"],
+          "args": ["app.py", "--port", "9082"],
           "internal_port": "9082"
         }
       ]
@@ -119,7 +157,6 @@ sequenceDiagram
     }
   }
 }
-
 ```
 
 说明：
@@ -152,6 +189,8 @@ gophermesh -config config.json
 
 - `-dashboard-host`：覆盖 Dashboard 监听地址，例如 `0.0.0.0`
 - `-dashboard-port`：覆盖 Dashboard 监听端口
+- `-no-dashboard`：静默运行，不自动打开浏览器中的 Dashboard 页面
+- `-noprotocol`：禁用 `gophermesh://` 协议注册与处理
 
 也可以直接运行样例配置：
 
@@ -197,7 +236,7 @@ Windows PowerShell：
 
 ```powershell
 go build -o gophermesh.exe .
-.\gophermesh.exe -config sample/sample_config.json
+.\gophermesh.exe -config sample/sample_config.json -no-dashboard
 ```
 
 或者安装后直接运行：
@@ -297,9 +336,9 @@ func main() {
 
 ## 为什么 DIY 这个项目？
 
-在量化交易与工业物联网（IoT）领域，我们经常面临“Web 界面太弱、云端算力太贵/太远”的尴尬。现有的方案要么过于沉重（Electron），要么极其繁琐（Native Messaging）。
+很多实际系统都会遇到同一个问题：前端需要一个稳定、简单、跨平台的本地入口，但真正的业务能力往往运行在另一个独立进程里。现有方案要么过于沉重（整套桌面壳），要么接入复杂（浏览器扩展、Native Messaging、自定义桥接层）。
 
-**GopherMesh** 追求的是一种极客式的平衡：**底层极度硬核（Go/Syscall），表层极度轻盈（HTML5），分发极度简单。** 它是为了那些在深夜里，依然追求极致系统掌控感的开发者而生的。
+**GopherMesh** 追求的是一种更通用的平衡：**底层足够硬核，表层足够轻盈，分发尽可能简单。** 你可以把它理解为一个专门面向“本地服务接入、进程编排、桌面自举、HTTP/TCP 统一入口”的通用基础框架。
 
 
 ---

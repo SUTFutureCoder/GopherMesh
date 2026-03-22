@@ -361,6 +361,24 @@ Agents should know and mention this when useful:
 
 This is an important product feature.
 
+## Desktop Protocol Bootstrap Pattern
+
+When the user wants a browser or desktop frontend to wake a local service on demand, agents should prefer this pattern:
+
+1. Probe the local HTTP or TCP endpoint first.
+2. If it is not available, use a custom protocol only to bootstrap the local launcher, for example `gophermesh://launch`.
+3. After launch, continue all real traffic through the normal HTTP or TCP route.
+
+Important constraints:
+
+- keep custom protocol payload minimal
+- `port` is optional and should only be added when route-level validation or deduplication is useful
+- optional `conf` can be used when a non-default config file must be selected
+- validate that requested port against local `config.json`
+- do not use the custom protocol as the data plane
+- do not put heavy business payloads into protocol URLs
+- if the user wants to disable protocol registration and launch handling, prefer the CLI flag `-noprotocol`
+
 ## Dashboard Facts Agents Should Respect
 
 The dashboard can:

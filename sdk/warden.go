@@ -26,6 +26,7 @@ func (e *Engine) isReady(targetAddr string) bool {
 func (e *Engine) spawnAndWait(ctx context.Context, cfg BackendConfig) error {
 	// 1. 组装执行命令
 	cmd := exec.Command(cfg.Cmd, cfg.Args...)
+	configureManagedProcess(cmd)
 
 	// 日志劫持逻辑
 	e.procMu.Lock()
@@ -46,6 +47,9 @@ func (e *Engine) spawnAndWait(ctx context.Context, cfg BackendConfig) error {
 	// 2. 触发操作系统拉起进程
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start cmd failed [%s]: %w", cfg.Cmd, err)
+	}
+	if err := registerManagedProcess(cmd); err != nil {
+		log.Printf("[Warden] warning: register PID %d to managed process group failed: %v", cmd.Process.Pid, err)
 	}
 
 	log.Printf("[Warden] success exec cmd: %s (PID: %d), wait port %s ready...", cfg.Cmd, cmd.Process.Pid, cfg.InternalPort)

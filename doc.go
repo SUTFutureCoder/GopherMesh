@@ -2,8 +2,10 @@
 // process orchestrator.
 //
 // By default it loads config from "config.json", starts the dashboard,
-// exposes configured HTTP/TCP public ports, and optionally cold-starts local
-// backends on demand.
+// exposes configured HTTP/TCP public ports, optionally cold-starts local
+// backends on demand, and best-effort registers the gophermesh:// launch
+// protocol unless disabled with -noprotocol. Protocol URLs support
+// gophermesh://launch with optional port/conf query parameters.
 //
 // Basic usage:
 //

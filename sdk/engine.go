@@ -40,6 +40,10 @@ type MeshEngine interface {
 	Shutdown(ctx context.Context) error
 }
 
+type EngineOptions struct {
+	NoDashboard bool
+}
+
 type ProcessInfo struct {
 	Cmd       *exec.Cmd
 	StartTime time.Time
@@ -55,6 +59,7 @@ type routeRuntime struct {
 type Engine struct {
 	role              Role
 	dashboardListener net.Listener
+	options           EngineOptions
 
 	cfgMu sync.RWMutex
 	cfg   Config
@@ -75,8 +80,15 @@ type Engine struct {
 	reloadMu sync.Mutex
 }
 
+var dashboardBrowserOpener = openBrowser
+
 // NewEngine 负责初始化并探测节点角色
 func NewEngine(cfg Config) (MeshEngine, error) {
+	return NewEngineWithOptions(cfg, EngineOptions{})
+}
+
+// NewEngineWithOptions 允许调用方覆盖 Dashboard 自动打开等运行行为。
+func NewEngineWithOptions(cfg Config, opts EngineOptions) (MeshEngine, error) {
 	normalized, err := cfg.Normalize()
 	if err != nil {
 		return nil, fmt.Errorf("normalize config: %w", err)
@@ -90,6 +102,7 @@ func NewEngine(cfg Config) (MeshEngine, error) {
 		cfg:               normalized,
 		role:              role,
 		dashboardListener: listener,
+		options:           opts,
 		process:           make(map[string]*ProcessInfo),
 		logBufs:           make(map[string]*LogBuffer),
 	}, nil
@@ -131,7 +144,9 @@ func (e *Engine) Run(ctx context.Context) error {
 
 		log.Printf("[Dashboard] start API server on %s", dashboardURL)
 
-		go openBrowser(dashboardURL)
+		if !e.options.NoDashboard {
+			go dashboardBrowserOpener(dashboardURL)
+		}
 
 		if err := dashboard.Serve(e.dashboardListener, e); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Printf("[Dashboard] failed to start dashboard server: %v", err)
