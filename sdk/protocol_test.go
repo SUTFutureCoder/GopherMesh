@@ -60,6 +60,18 @@ func TestParseLaunchProtocolRejectsUnsupportedAction(t *testing.T) {
 	}
 }
 
+func TestParseLaunchProtocolWithCustomScheme(t *testing.T) {
+	req, err := ParseLaunchProtocolWithOptions("etaiIotPlugin://launch?port=8090", LaunchProtocolOptions{
+		Scheme: "etaiIotPlugin",
+	})
+	if err != nil {
+		t.Fatalf("ParseLaunchProtocolWithOptions() error = %v", err)
+	}
+	if req.Port != "8090" {
+		t.Fatalf("Port = %q, want %q", req.Port, "8090")
+	}
+}
+
 func TestValidateLaunchPort(t *testing.T) {
 	cfg := DefaultConfig()
 	if err := ValidateLaunchPort(cfg, "8081"); err != nil {

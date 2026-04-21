@@ -16,7 +16,7 @@ func TestRegisterWindowsLaunchProtocol(t *testing.T) {
 	writeFakeCommand(t, commandDir, "reg")
 
 	exePath := `C:\Program Files\gophermesh\gophermesh.exe`
-	if err := registerWindowsLaunchProtocol(exePath); err != nil {
+	if err := registerWindowsLaunchProtocol(exePath, normalizeLaunchProtocolOptions(LaunchProtocolOptions{})); err != nil {
 		t.Fatalf("registerWindowsLaunchProtocol() error = %v", err)
 	}
 
@@ -49,7 +49,7 @@ func TestRegisterLinuxLaunchProtocol(t *testing.T) {
 	writeFakeCommand(t, commandDir, "update-desktop-database")
 
 	exePath := filepath.Join(homeDir, "bin", "gophermesh")
-	if err := registerLinuxLaunchProtocol(exePath); err != nil {
+	if err := registerLinuxLaunchProtocol(exePath, normalizeLaunchProtocolOptions(LaunchProtocolOptions{})); err != nil {
 		t.Fatalf("registerLinuxLaunchProtocol() error = %v", err)
 	}
 
@@ -90,7 +90,7 @@ func TestRegisterDarwinLaunchProtocolWritesHandler(t *testing.T) {
 	writeFakeCommand(t, commandDir, "defaults")
 
 	exePath := filepath.Join(homeDir, "bin", "gophermesh")
-	if err := registerDarwinLaunchProtocol(exePath); err != nil {
+	if err := registerDarwinLaunchProtocol(exePath, normalizeLaunchProtocolOptions(LaunchProtocolOptions{})); err != nil {
 		t.Fatalf("registerDarwinLaunchProtocol() error = %v", err)
 	}
 
@@ -121,7 +121,7 @@ func TestRegisterDarwinLaunchProtocolSkipsDuplicateHandler(t *testing.T) {
 	writeFakeCommand(t, commandDir, "defaults")
 
 	exePath := filepath.Join(homeDir, "bin", "gophermesh")
-	if err := registerDarwinLaunchProtocol(exePath); err != nil {
+	if err := registerDarwinLaunchProtocol(exePath, normalizeLaunchProtocolOptions(LaunchProtocolOptions{})); err != nil {
 		t.Fatalf("registerDarwinLaunchProtocol() error = %v", err)
 	}
 
@@ -131,6 +131,37 @@ func TestRegisterDarwinLaunchProtocolSkipsDuplicateHandler(t *testing.T) {
 	}
 	if strings.Contains(logBody, "defaults write com.apple.LaunchServices/com.apple.launchservices.secure LSHandlers -array-add") {
 		t.Fatalf("unexpected duplicate launch services write\nlog:\n%s", logBody)
+	}
+}
+
+func TestRegisterLinuxLaunchProtocolWithCustomOptions(t *testing.T) {
+	commandDir := t.TempDir()
+	homeDir := t.TempDir()
+	logPath := filepath.Join(t.TempDir(), "linux-custom.log")
+	prependCommandPath(t, commandDir)
+	setTestEnv(t, "LOGFILE", logPath)
+	setUserHomeEnv(t, homeDir)
+	writeFakeCommand(t, commandDir, "xdg-mime")
+	writeFakeCommand(t, commandDir, "update-desktop-database")
+
+	options := normalizeLaunchProtocolOptions(LaunchProtocolOptions{
+		Scheme:           "etaiIotPlugin",
+		DisplayName:      "etaiIotPlugin",
+		LinuxDesktopName: "etaiiotplugin",
+	})
+
+	exePath := filepath.Join(homeDir, "bin", "etaiIotPlugin")
+	if err := registerLinuxLaunchProtocol(exePath, options); err != nil {
+		t.Fatalf("registerLinuxLaunchProtocol() error = %v", err)
+	}
+
+	desktopPath := filepath.Join(homeDir, ".local", "share", "applications", "etaiiotplugin.desktop")
+	desktopBody := readTestFile(t, desktopPath)
+	if !strings.Contains(desktopBody, "Name=etaiIotPlugin") {
+		t.Fatalf("desktop entry missing custom name\nbody:\n%s", desktopBody)
+	}
+	if !strings.Contains(desktopBody, "MimeType=x-scheme-handler/etaiIotPlugin;") {
+		t.Fatalf("desktop entry missing custom scheme\nbody:\n%s", desktopBody)
 	}
 }
 
