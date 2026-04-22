@@ -295,6 +295,39 @@ curl -H "Origin: https://example.com" "http://127.0.0.1:18082/headers"
 curl -N "http://127.0.0.1:17084/"
 ```
 
+`/healthz` 约定：
+
+- 内部健康路由统一返回 JSON 探活结果，默认字段包括 `ok`、`status`、`mesh`、`version`
+- 默认版本号为 `0.0.1`
+- 若通过 SDK 嵌入，可附加自定义字段，但保留字段仍由 SDK 控制
+
+SDK 自定义 `healthz` 样例：
+
+```go
+engine, err := mesh.NewEngineWithOptions(cfg, mesh.EngineOptions{
+  Healthz: mesh.HealthzOptions{
+    Version: "0.4.0",
+    Fields: map[string]any{
+      "name": "etaiIotPlugin",
+      "time": time.Now().Unix(),
+    },
+  },
+})
+```
+
+对应探活响应示例：
+
+```json
+{
+  "ok": true,
+  "status": "ok",
+  "mesh": "running",
+  "version": "0.4.0",
+  "name": "etaiIotPlugin",
+  "time": 1770000000
+}
+```
+
 TCP 样例：
 
 ```bash
